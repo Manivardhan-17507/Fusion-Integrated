@@ -1,124 +1,240 @@
-from rest_framework import status, views, permissions
+"""ELM HTTP endpoints: authorize at the module boundary and delegate writes."""
+
+from rest_framework import serializers, status, views
 from rest_framework.response import Response
+
+from core.api.exceptions import ConflictError, NotFoundError, PermissionDeniedError
+from fusion_auth.permissions import HasModuleGrant, HasPermission
+from modules.elm.domain.state_machine import WorkflowTransitionError
 from modules.elm.models import LeaveRequest
-from modules.elm.services.leave_service import LeaveService
 from modules.elm.selectors.leave_selectors import (
-    get_user_leaves, get_user_balances, get_pending_substitute_requests, get_pending_unit_head_approvals
+    get_pending_authority_approvals,
+    get_pending_substitute_requests,
+    get_pending_unit_head_approvals,
+    get_user_balances,
+    get_user_leaves,
 )
+from modules.elm.services.leave_service import LeaveService
+
 from .serializers import (
-    LeaveRequestSerializer, LeaveBalanceSerializer, LeaveCreateSerializer,
-    SubstituteDecisionSerializer, ApproverDecisionSerializer
+    ApproverDecisionSerializer,
+    LeaveBalanceAdjustmentSerializer,
+    LeaveBalanceSerializer,
+    LeaveCreateSerializer,
+    LeaveRequestSerializer,
+    ReplacementSubstituteSerializer,
+    SubstituteDecisionSerializer,
 )
+
+MODULE = HasModuleGrant("elm")
+APPLY = HasPermission("elm.leave.apply")
+VIEW_SELF = HasPermission("elm.leave.view_self")
+SUBSTITUTE = HasPermission("elm.leave.substitute")
+APPROVE = HasPermission("elm.leave.approve")
+SANCTION = HasPermission("elm.leave.sanction")
+ADMIN = HasPermission("elm.leave.admin")
+
+
+def _actor_id(request) -> str:
+    return str(request.principal.user_id)
+
+
+def _raise_service_error(exc: Exception) -> None:
+    if isinstance(exc, LeaveRequest.DoesNotExist):
+        raise NotFoundError("Leave request not found.") from exc
+    if isinstance(exc, PermissionError):
+        raise PermissionDeniedError(str(exc)) from exc
+    if isinstance(exc, WorkflowTransitionError):
+        raise ConflictError(str(exc)) from exc
+    if isinstance(exc, ValueError):
+        raise serializers.ValidationError({"non_field_errors": [str(exc)]}) from exc
+    raise exc
 
 
 class LeaveListCreateView(views.APIView):
-    permission_classes = [permissions.IsAuthenticated]
+    def get_permissions(self):
+        action_permission = VIEW_SELF if self.request.method == "GET" else APPLY
+        return [MODULE(), action_permission()]
 
     def get(self, request):
-        user_id = str(request.user.username)
-        leaves = get_user_leaves(user_id)
-        serializer = LeaveRequestSerializer(leaves, many=True)
-        return Response(serializer.data)
+        leaves = get_user_leaves(_actor_id(request))
+        return Response(LeaveRequestSerializer(leaves, many=True).data)
 
     def post(self, request):
-        user_id = str(request.user.username)
-        serializer = LeaveCreateSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        data = serializer.validated_data
+        payload = LeaveCreateSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        data = payload.validated_data
+        data.setdefault("duration_days", None)
         try:
             leave = LeaveService.apply_leave(
-                applicant_id=user_id,
-                leave_type=data["leave_type"],
-                start_date=data["start_date"],
-                end_date=data["end_date"],
-                duration_days=data["duration_days"],
-                reason=data["reason"],
-                is_half_day=data.get("is_half_day", False),
-                half_day_session=data.get("half_day_session", ""),
-                station_leave=data.get("station_leave", False),
-                station_leave_address=data.get("station_leave_address", ""),
-                out_of_station_from=data.get("out_of_station_from"),
-                out_of_station_to=data.get("out_of_station_to"),
-                substitute_id=data.get("substitute_id", ""),
+                applicant_id=_actor_id(request),
+                applicant_roles=tuple(request.principal.roles),
+                **data,
             )
-            return Response(LeaveRequestSerializer(leave).data, status=status.HTTP_201_CREATED)
-        except (ValueError, PermissionError) as e:
-            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except (
+            PermissionError,
+            ValueError,
+            WorkflowTransitionError,
+            LeaveRequest.DoesNotExist,
+        ) as exc:
+            _raise_service_error(exc)
+        return Response(LeaveRequestSerializer(leave).data, status=status.HTTP_201_CREATED)
 
 
 class LeaveBalanceView(views.APIView):
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [MODULE, VIEW_SELF]
 
     def get(self, request):
-        user_id = str(request.user.username)
-        balances = get_user_balances(user_id)
+        balances = get_user_balances(_actor_id(request))
         return Response(LeaveBalanceSerializer(balances, many=True).data)
 
 
+class LeaveBalanceAdjustmentView(views.APIView):
+    permission_classes = [MODULE, ADMIN]
+
+    def post(self, request):
+        payload = LeaveBalanceAdjustmentSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        try:
+            balance = LeaveService.adjust_entitlement(
+                **payload.validated_data, actor_id=_actor_id(request),
+            )
+        except (ValueError, WorkflowTransitionError, LeaveRequest.DoesNotExist) as exc:
+            _raise_service_error(exc)
+        return Response(LeaveBalanceSerializer(balance).data, status=status.HTTP_200_OK)
+
+
 class SubstituteQueueView(views.APIView):
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [MODULE, SUBSTITUTE]
 
     def get(self, request):
-        user_id = str(request.user.username)
-        requests = get_pending_substitute_requests(user_id)
+        requests = get_pending_substitute_requests(_actor_id(request))
         return Response(LeaveRequestSerializer(requests, many=True).data)
 
 
 class SubstituteDecisionView(views.APIView):
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [MODULE, SUBSTITUTE]
 
     def post(self, request, pk):
-        user_id = str(request.user.username)
-        serializer = SubstituteDecisionSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        payload = SubstituteDecisionSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
         try:
             leave = LeaveService.respond_substitute(
                 leave_id=pk,
-                substitute_id=user_id,
-                accept=serializer.validated_data["accept"],
-                remarks=serializer.validated_data.get("remarks", ""),
+                substitute_id=_actor_id(request),
+                **payload.validated_data,
             )
-            return Response(LeaveRequestSerializer(leave).data)
-        except Exception as e:
-            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except (
+            PermissionError,
+            ValueError,
+            WorkflowTransitionError,
+            LeaveRequest.DoesNotExist,
+        ) as exc:
+            _raise_service_error(exc)
+        return Response(LeaveRequestSerializer(leave).data)
+
+
+class ReplacementSubstituteView(views.APIView):
+    permission_classes = [MODULE, APPLY]
+
+    def post(self, request, pk):
+        payload = ReplacementSubstituteSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        try:
+            leave = LeaveService.nominate_replacement(
+                leave_id=pk,
+                applicant_id=_actor_id(request),
+                substitute_id=payload.validated_data["substitute_id"],
+            )
+        except (
+            PermissionError,
+            ValueError,
+            WorkflowTransitionError,
+            LeaveRequest.DoesNotExist,
+        ) as exc:
+            _raise_service_error(exc)
+        return Response(LeaveRequestSerializer(leave).data)
 
 
 class ApprovalsQueueView(views.APIView):
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [MODULE, APPROVE]
 
     def get(self, request):
-        leaves = get_pending_unit_head_approvals()
-        return Response(LeaveRequestSerializer(leaves, many=True).data)
+        requests = get_pending_unit_head_approvals()
+        return Response(LeaveRequestSerializer(requests, many=True).data)
 
 
 class ApproverDecisionView(views.APIView):
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [MODULE, APPROVE]
 
     def post(self, request, pk):
-        user_id = str(request.user.username)
-        serializer = ApproverDecisionSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        payload = ApproverDecisionSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
         try:
             leave = LeaveService.review_unit_head(
                 leave_id=pk,
-                approver_id=user_id,
-                approve=serializer.validated_data["approve"],
-                remarks=serializer.validated_data.get("remarks", ""),
-                forward_higher=serializer.validated_data.get("forward_higher", False),
+                approver_id=_actor_id(request),
+                **payload.validated_data,
             )
-            return Response(LeaveRequestSerializer(leave).data)
-        except Exception as e:
-            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except (
+            PermissionError,
+            ValueError,
+            WorkflowTransitionError,
+            LeaveRequest.DoesNotExist,
+        ) as exc:
+            _raise_service_error(exc)
+        return Response(LeaveRequestSerializer(leave).data)
+
+
+class AuthorityApprovalsQueueView(views.APIView):
+    permission_classes = [MODULE, SANCTION]
+
+    def get(self, request):
+        requests = get_pending_authority_approvals()
+        return Response(LeaveRequestSerializer(requests, many=True).data)
+
+
+class AuthorityDecisionView(views.APIView):
+    permission_classes = [MODULE, SANCTION]
+
+    def post(self, request, pk):
+        payload = ApproverDecisionSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        try:
+            leave = LeaveService.decide_authority(
+                leave_id=pk,
+                approver_id=_actor_id(request),
+                approve=payload.validated_data["approve"],
+                remarks=payload.validated_data.get("remarks", ""),
+            )
+        except (
+            PermissionError,
+            ValueError,
+            WorkflowTransitionError,
+            LeaveRequest.DoesNotExist,
+        ) as exc:
+            _raise_service_error(exc)
+        return Response(LeaveRequestSerializer(leave).data)
 
 
 class LeaveWithdrawView(views.APIView):
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [MODULE, APPLY]
 
     def post(self, request, pk):
-        user_id = str(request.user.username)
         reason = request.data.get("reason", "")
+        if not isinstance(reason, str):
+            raise serializers.ValidationError({"reason": ["Must be a string."]})
         try:
-            leave = LeaveService.withdraw_leave(leave_id=pk, user_id=user_id, reason=reason)
-            return Response(LeaveRequestSerializer(leave).data)
-        except Exception as e:
-            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            leave = LeaveService.withdraw_leave(
+                leave_id=pk,
+                user_id=_actor_id(request),
+                reason=reason,
+            )
+        except (
+            PermissionError,
+            ValueError,
+            WorkflowTransitionError,
+            LeaveRequest.DoesNotExist,
+        ) as exc:
+            _raise_service_error(exc)
+        return Response(LeaveRequestSerializer(leave).data)

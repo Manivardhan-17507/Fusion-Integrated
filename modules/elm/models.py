@@ -1,7 +1,12 @@
 import uuid
 from decimal import Decimal
+
 from django.db import models
 from django.utils import timezone
+
+
+def current_leave_year() -> int:
+    return timezone.localdate().year
 
 
 class LeaveType(models.TextChoices):
@@ -16,6 +21,7 @@ class LeaveType(models.TextChoices):
 class LeaveStatus(models.TextChoices):
     DRAFT = "DRAFT", "Draft"
     PENDING_SUBSTITUTE = "PENDING_SUBSTITUTE", "Pending Substitute Acceptance"
+    APPLICANT_ACTION_REQUIRED = "APPLICANT_ACTION_REQUIRED", "Applicant Action Required"
     PENDING_UNIT_HEAD = "PENDING_UNIT_HEAD", "Pending Unit Head Recommendation"
     PENDING_AUTHORITY = "PENDING_AUTHORITY", "Pending Sanctioning Authority"
     APPROVED = "APPROVED", "Approved"
@@ -35,7 +41,7 @@ class LeaveBalance(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user_id = models.CharField(max_length=64, db_index=True)
     leave_type = models.CharField(max_length=8, choices=LeaveType.choices)
-    year = models.PositiveSmallIntegerField(default=2026)
+    year = models.PositiveSmallIntegerField(default=current_leave_year)
     credited = models.DecimalField(max_digits=5, decimal_places=1, default=Decimal("0.0"))
     availed = models.DecimalField(max_digits=5, decimal_places=1, default=Decimal("0.0"))
     pending = models.DecimalField(max_digits=5, decimal_places=1, default=Decimal("0.0"))
@@ -44,12 +50,12 @@ class LeaveBalance(models.Model):
         db_table = "elm_leave_balance"
         unique_together = ("user_id", "leave_type", "year")
 
+    def __str__(self):
+        return f"{self.user_id} - {self.leave_type}: {self.balance} days"
+
     @property
     def balance(self) -> Decimal:
         return self.credited - self.availed - self.pending
-
-    def __str__(self):
-        return f"{self.user_id} - {self.leave_type}: {self.balance} days"
 
 
 class LeaveRequest(models.Model):
@@ -115,3 +121,28 @@ class LeaveActionLog(models.Model):
     class Meta:
         db_table = "elm_action_log"
         ordering = ["created_at"]
+
+    def __str__(self):
+        return f"{self.action} by {self.actor_user_id} on {self.leave_request_id}"
+
+
+class LeaveBalanceAdjustment(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user_id = models.CharField(max_length=64, db_index=True)
+    leave_type = models.CharField(max_length=8, choices=LeaveType.choices)
+    year = models.PositiveSmallIntegerField()
+    actor_user_id = models.CharField(max_length=64)
+    previous_credited = models.DecimalField(max_digits=5, decimal_places=1)
+    credited = models.DecimalField(max_digits=5, decimal_places=1)
+    reason = models.TextField()
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = "elm_balance_adjustment"
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return (
+            f"{self.user_id} {self.leave_type}/{self.year}: "
+            f"{self.previous_credited} -> {self.credited}"
+        )

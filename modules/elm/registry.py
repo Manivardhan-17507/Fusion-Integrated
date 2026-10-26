@@ -51,6 +51,14 @@ NAV_ITEMS = [
         "required_permission": "elm.leave.approve",
         "sort_order": 50,
     },
+    {
+        "code": "elm.authority",
+        "label": "Final Sanctioning",
+        "icon": "SealCheck",
+        "to": "/elm/authority",
+        "required_permission": "elm.leave.sanction",
+        "sort_order": 60,
+    },
 ]
 
 PERMISSIONS = [
@@ -58,6 +66,7 @@ PERMISSIONS = [
     ("elm.leave.view_self", "View own leave applications and balance ledger"),
     ("elm.leave.substitute", "Review and respond to substitute nominations"),
     ("elm.leave.approve", "Review and sanction subordinate leave requests"),
+    ("elm.leave.sanction", "Make final higher-sanction leave decisions"),
     ("elm.leave.admin", "Manage leave quotas, calendar cycles and adjustments"),
 ]
 
@@ -72,20 +81,22 @@ _EMPLOYEE = [
     "elm.leave.substitute",
 ]
 
-_UNIT_HEAD = _EMPLOYEE + [
-    "elm.leave.approve",
+_UNIT_HEAD = [*_EMPLOYEE, "elm.leave.approve"]
+
+_ADMIN = [
+    *_UNIT_HEAD,
+    "elm.leave.admin",
+    "elm.leave.sanction",
 ]
 
-_ADMIN = _UNIT_HEAD + [
-    "elm.leave.admin",
-]
+_SANCTIONING_AUTHORITY = [*_EMPLOYEE, "elm.leave.sanction"]
 
 ROLE_GRANTS = {
     "faculty": _EMPLOYEE,
     "staff": _EMPLOYEE,
     "unit_head": _UNIT_HEAD,
-    "dean": _UNIT_HEAD,
-    "registrar": _UNIT_HEAD,
-    "director": _UNIT_HEAD,
+    "dean": [*_UNIT_HEAD, "elm.leave.sanction"],
+    "registrar": [*_UNIT_HEAD, "elm.leave.sanction"],
+    "director": _SANCTIONING_AUTHORITY,
     "leave_admin": _ADMIN,
 }

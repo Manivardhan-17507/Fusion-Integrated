@@ -1,16 +1,36 @@
-import React from "react";
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { PageHeader } from "../../../ui/components/PageHeader";
 import { StatusBadge } from "../../../ui/components/StatusBadge";
-import { useMyLeaves, withdrawLeaveRequest } from "../api/hooks";
+import { nominateReplacement, useMyLeaves, withdrawLeaveRequest } from "../api/hooks";
 
 export function MyLeavesPage() {
   const { leaves, loading, error, refetch } = useMyLeaves();
+  const [replacementIds, setReplacementIds] = useState<Record<string, string>>({});
+  const [replacementError, setReplacementError] = useState<string | null>(null);
 
   const handleWithdraw = async (id: string) => {
     if (window.confirm("Are you sure you want to withdraw this leave request?")) {
-      await withdrawLeaveRequest(id, "Withdrawn by employee");
-      refetch();
+      setReplacementError(null);
+      try {
+        await withdrawLeaveRequest(id, "Withdrawn by employee");
+        await refetch();
+      } catch (err: any) {
+        const responseError = err?.response?.data?.error;
+        setReplacementError(responseError?.message ?? responseError ?? err.message ?? "Could not withdraw request.");
+      }
+    }
+  };
+
+  const handleReplacement = async (id: string) => {
+    setReplacementError(null);
+    try {
+      await nominateReplacement(id, replacementIds[id] || "");
+      setReplacementIds({ ...replacementIds, [id]: "" });
+      await refetch();
+    } catch (err: any) {
+      const responseError = err?.response?.data?.error;
+      setReplacementError(responseError?.message ?? responseError ?? err.message ?? "Could not nominate substitute.");
     }
   };
 
@@ -35,6 +55,7 @@ export function MyLeavesPage() {
 
       {loading && <p>Loading leave records...</p>}
       {error && <p style={{ color: "#dc2626" }}>{error}</p>}
+      {replacementError && <p style={{ color: "#dc2626" }}>{replacementError}</p>}
 
       {!loading && leaves.length === 0 && (
         <div style={{ textAlign: "center", padding: "3rem", background: "#f8fafc", borderRadius: 8 }}>
@@ -69,7 +90,13 @@ export function MyLeavesPage() {
                   <StatusBadge status={l.status} />
                 </td>
                 <td style={{ padding: 12 }}>
-                  {["PENDING_SUBSTITUTE", "PENDING_UNIT_HEAD", "PENDING_AUTHORITY"].includes(l.status) && (
+                  {l.status === "APPLICANT_ACTION_REQUIRED" && (
+                    <div style={{ display: "flex", gap: 4, marginBottom: 6 }}>
+                      <input aria-label="Replacement substitute ID" placeholder="Replacement substitute ID" value={replacementIds[l.id] || ""} onChange={(e) => setReplacementIds({ ...replacementIds, [l.id]: e.target.value })} />
+                      <button onClick={() => handleReplacement(l.id)}>Nominate</button>
+                    </div>
+                  )}
+                  {["PENDING_SUBSTITUTE", "APPLICANT_ACTION_REQUIRED", "PENDING_UNIT_HEAD", "PENDING_AUTHORITY"].includes(l.status) && (
                     <button
                       onClick={() => handleWithdraw(l.id)}
                       style={{ color: "#ef4444", background: "transparent", border: "1px solid #fca5a5", borderRadius: 4, padding: "4px 8px", cursor: "pointer" }}

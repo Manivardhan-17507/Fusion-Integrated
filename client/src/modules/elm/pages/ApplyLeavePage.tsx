@@ -30,7 +30,7 @@ export function ApplyLeavePage() {
         leave_type: leaveType,
         start_date: startDate,
         end_date: endDate,
-        duration_days: parseFloat(duration),
+        duration_days: isHalfDay ? 0.5 : parseFloat(duration),
         reason,
         is_half_day: isHalfDay,
         half_day_session: isHalfDay ? session : undefined,
@@ -42,7 +42,8 @@ export function ApplyLeavePage() {
       });
       navigate("/elm/mine");
     } catch (err: any) {
-      setErrorMsg(err?.response?.data?.error || err.message || "Failed to submit leave request.");
+      const responseError = err?.response?.data?.error;
+      setErrorMsg(responseError?.message ?? responseError ?? err.message ?? "Failed to submit leave request.");
     } finally {
       setSubmitting(false);
     }
@@ -66,7 +67,11 @@ export function ApplyLeavePage() {
           <label style={{ display: "block", fontWeight: 600, marginBottom: 4 }}>Leave Category</label>
           <select
             value={leaveType}
-            onChange={(e) => setLeaveType(e.target.value as LeaveType)}
+            onChange={(e) => {
+              const nextType = e.target.value as LeaveType;
+              setLeaveType(nextType);
+              if (nextType !== "CL") setIsHalfDay(false);
+            }}
             style={{ width: "100%", padding: 8, borderRadius: 4, border: "1px solid #cbd5e1" }}
           >
             <option value="CL">Casual Leave (CL)</option>
@@ -101,6 +106,30 @@ export function ApplyLeavePage() {
           </div>
         </div>
 
+        {leaveType === "CL" && (
+          <div style={{ marginBottom: "1rem" }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <input
+                type="checkbox"
+                checked={isHalfDay}
+                onChange={(e) => setIsHalfDay(e.target.checked)}
+              />
+              Half-day Casual Leave
+            </label>
+            {isHalfDay && (
+              <select
+                aria-label="Half-day session"
+                value={session}
+                onChange={(e) => setSession(e.target.value)}
+                style={{ marginTop: 8, padding: 8 }}
+              >
+                <option value="FN">First half</option>
+                <option value="AN">Second half</option>
+              </select>
+            )}
+          </div>
+        )}
+
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem", marginBottom: "1rem" }}>
           <div>
             <label style={{ display: "block", fontWeight: 600, marginBottom: 4 }}>Duration (Days)</label>
@@ -115,10 +144,10 @@ export function ApplyLeavePage() {
             />
           </div>
           <div>
-            <label style={{ display: "block", fontWeight: 600, marginBottom: 4 }}>Substitute Employee ID / Username</label>
+          <label style={{ display: "block", fontWeight: 600, marginBottom: 4 }}>Substitute Fusion user ID</label>
             <input
               type="text"
-              placeholder="e.g. fac_cs_02"
+              placeholder="e.g. 2041"
               value={substituteId}
               onChange={(e) => setSubstituteId(e.target.value)}
               style={{ width: "100%", padding: 8, borderRadius: 4, border: "1px solid #cbd5e1" }}

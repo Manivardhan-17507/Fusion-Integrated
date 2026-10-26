@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import { useState } from "react";
 import { PageHeader } from "../../../ui/components/PageHeader";
 import { useApprovalsQueue, decideApproval } from "../api/hooks";
 
@@ -26,6 +26,9 @@ export function LeaveApprovalsPage() {
         <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
           {requests.map((r) => (
             <div key={r.id} style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 8, padding: "1.25rem" }}>
+              {!["CL", "RH"].includes(r.leave_type) && (
+                <p style={{ color: "#7c3aed", fontWeight: 600 }}>Higher-sanction request: record a recommendation for final authority review.</p>
+              )}
               <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
                 <span style={{ fontWeight: 700, fontSize: 16 }}>{r.applicant_user_id} - {r.leave_type} ({r.duration_days} days)</span>
                 <span style={{ color: "#64748b", fontSize: 13 }}>{r.start_date} to {r.end_date}</span>
@@ -49,24 +52,29 @@ export function LeaveApprovalsPage() {
                   onChange={(e) => setRemarks({ ...remarks, [r.id]: e.target.value })}
                   style={{ flex: 1, padding: 6, borderRadius: 4, border: "1px solid #cbd5e1" }}
                 />
-                <button
-                  onClick={() => handleDecision(r.id, true, false)}
-                  style={{ background: "#16a34a", color: "#fff", border: "none", padding: "6px 12px", borderRadius: 4, cursor: "pointer" }}
-                >
-                  Approve
-                </button>
-                <button
-                  onClick={() => handleDecision(r.id, true, true)}
-                  style={{ background: "#2563eb", color: "#fff", border: "none", padding: "6px 12px", borderRadius: 4, cursor: "pointer" }}
-                >
-                  Forward to Authority
-                </button>
-                <button
-                  onClick={() => handleDecision(r.id, false, false)}
-                  style={{ background: "#dc2626", color: "#fff", border: "none", padding: "6px 12px", borderRadius: 4, cursor: "pointer" }}
-                >
-                  Reject
-                </button>
+                {!["CL", "RH"].includes(r.leave_type) ? (
+                  <>
+                    <button
+                      onClick={() => handleDecision(r.id, true, true)}
+                      style={{ background: "#16a34a", color: "#fff", border: "none", padding: "6px 12px", borderRadius: 4, cursor: "pointer" }}
+                    >Recommend</button>
+                    <button
+                      onClick={() => handleDecision(r.id, false, true)}
+                      style={{ background: "#d97706", color: "#fff", border: "none", padding: "6px 12px", borderRadius: 4, cursor: "pointer" }}
+                    >Not recommended</button>
+                  </>
+                ) : (
+                  <button
+                    onClick={() => handleDecision(r.id, true, false)}
+                    style={{ background: "#16a34a", color: "#fff", border: "none", padding: "6px 12px", borderRadius: 4, cursor: "pointer" }}
+                  >Approve</button>
+                )}
+                {["CL", "RH"].includes(r.leave_type) && (
+                  <button
+                    onClick={() => handleDecision(r.id, false, false)}
+                    style={{ background: "#dc2626", color: "#fff", border: "none", padding: "6px 12px", borderRadius: 4, cursor: "pointer" }}
+                  >Reject</button>
+                )}
               </div>
             </div>
           ))}

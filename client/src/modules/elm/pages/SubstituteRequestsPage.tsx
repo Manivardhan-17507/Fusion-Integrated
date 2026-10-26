@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import { useState } from "react";
 import { PageHeader } from "../../../ui/components/PageHeader";
 import { useSubstituteQueue, decideSubstitute } from "../api/hooks";
 

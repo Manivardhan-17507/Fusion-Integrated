@@ -3,6 +3,7 @@ export type LeaveType = "CL" | "RH" | "SCL" | "EL" | "COL" | "VL";
 export type LeaveStatus =
   | "DRAFT"
   | "PENDING_SUBSTITUTE"
+  | "APPLICANT_ACTION_REQUIRED"
   | "PENDING_UNIT_HEAD"
   | "PENDING_AUTHORITY"
   | "APPROVED"

@@ -2,6 +2,11 @@ import { useState, useEffect, useCallback } from "react";
 import { http } from "../../../lib/http";
 import type { LeaveRequest, LeaveBalance, ApplyLeavePayload } from "./types";
 
+function errorMessage(error: any): string {
+  const responseError = error?.response?.data?.error;
+  return responseError?.message ?? responseError ?? error?.message ?? "Request failed.";
+}
+
 export function useMyLeaves() {
   const [leaves, setLeaves] = useState<LeaveRequest[]>([]);
   const [loading, setLoading] = useState(true);
@@ -14,7 +19,7 @@ export function useMyLeaves() {
       setLeaves(res.data);
       setError(null);
     } catch (err: any) {
-      setError(err?.response?.data?.error || err.message);
+      setError(errorMessage(err));
     } finally {
       setLoading(false);
     }
@@ -39,7 +44,7 @@ export function useLeaveBalances() {
       setBalances(res.data);
       setError(null);
     } catch (err: any) {
-      setError(err?.response?.data?.error || err.message);
+      setError(errorMessage(err));
     } finally {
       setLoading(false);
     }
@@ -64,7 +69,7 @@ export function useSubstituteQueue() {
       setRequests(res.data);
       setError(null);
     } catch (err: any) {
-      setError(err?.response?.data?.error || err.message);
+      setError(errorMessage(err));
     } finally {
       setLoading(false);
     }
@@ -89,7 +94,32 @@ export function useApprovalsQueue() {
       setRequests(res.data);
       setError(null);
     } catch (err: any) {
-      setError(err?.response?.data?.error || err.message);
+      setError(errorMessage(err));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchQueue();
+  }, [fetchQueue]);
+
+  return { requests, loading, error, refetch: fetchQueue };
+}
+
+export function useAuthorityApprovalsQueue() {
+  const [requests, setRequests] = useState<LeaveRequest[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchQueue = useCallback(async () => {
+    try {
+      setLoading(true);
+      const res = await http.get<LeaveRequest[]>("/api/v1/elm/authority-approvals/");
+      setRequests(res.data);
+      setError(null);
+    } catch (err: any) {
+      setError(errorMessage(err));
     } finally {
       setLoading(false);
     }
@@ -123,5 +153,20 @@ export async function decideApproval(leaveId: string, approve: boolean, remarks:
 
 export async function withdrawLeaveRequest(leaveId: string, reason: string = ""): Promise<LeaveRequest> {
   const res = await http.post<LeaveRequest>(`/api/v1/elm/leaves/${leaveId}/withdraw/`, { reason });
+  return res.data;
+}
+
+export async function nominateReplacement(leaveId: string, substituteId: string): Promise<LeaveRequest> {
+  const res = await http.post<LeaveRequest>(`/api/v1/elm/leaves/${leaveId}/replacement-substitute/`, {
+    substitute_id: substituteId,
+  });
+  return res.data;
+}
+
+export async function decideAuthority(leaveId: string, approve: boolean, remarks: string = ""): Promise<LeaveRequest> {
+  const res = await http.post<LeaveRequest>(`/api/v1/elm/authority-approvals/${leaveId}/decision/`, {
+    approve,
+    remarks,
+  });
   return res.data;
 }
